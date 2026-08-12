@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.py[cod]
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# Build
+build/
+dist/
+*.egg-info/
+
+# Cython generated files
+*.c
+*.cpp
+*.so
+*.pyd
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# IDE
+.vscode/
+.idea/
+
+# Runtime IPC files
+*.ipc
+*.mmap
+
+# Logs
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
