@@ -1,17 +1,18 @@
 """
 ChronosMatch IPC Consumer.
 
-Reads orders from the mmap ring buffer.
+Reads orders from the mmap ring buffer and sends them
+to the Cython matching engine.
 """
 
 import os
 import time
 
 from ipc import RingBuffer, BUY, SELL
+from cython_engine.matching_engine import CythonMatchingEngine
 
 
 IPC_FILE = "chronosmatch.ipc"
-
 BUFFER_CAPACITY = 10_000
 
 
@@ -31,8 +32,10 @@ class OrderConsumer:
             capacity=self.buffer_capacity,
         )
 
-        self.orders_consumed = 0
+        self.engine = CythonMatchingEngine()
 
+        self.orders_consumed = 0
+        self.trades_generated = 0
         self.start_time = None
 
     def connect(self):
@@ -47,17 +50,33 @@ class OrderConsumer:
         self.ring_buffer.open()
 
         print("Connected to ChronosMatch IPC.")
+        print("Cython matching engine initialized.")
         print("Waiting for orders...\n")
 
+    def process_order(self, order):
+        """Send one IPC order to the Cython matching engine."""
+
+        is_buy = order.side == BUY
+
+        trades = self.engine.match_order(
+            order.order_id,
+            order.price,
+            order.quantity,
+            is_buy,
+            order.timestamp_ns,
+        )
+
+        self.orders_consumed += 1
+        self.trades_generated += len(trades)
+
+        return trades
+
     def consume(self, duration: int = 10):
-        """Consume orders for the specified duration."""
+        """Consume and process orders for the specified duration."""
 
         self.start_time = time.perf_counter()
 
-        end_time = (
-            self.start_time + duration
-        )
-
+        end_time = self.start_time + duration
         last_display = self.start_time
 
         while time.perf_counter() < end_time:
@@ -65,15 +84,13 @@ class OrderConsumer:
             order = self.ring_buffer.read()
 
             if order is None:
-                # Nothing available right now.
-                # Give the CPU a tiny break.
                 time.sleep(0.0001)
                 continue
 
-            self.orders_consumed += 1
+            trades = self.process_order(order)
 
-            # Display the first few orders.
             if self.orders_consumed <= 10:
+
                 side = (
                     "BUY"
                     if order.side == BUY
@@ -84,13 +101,14 @@ class OrderConsumer:
                     f"Order ID={order.order_id:<6} "
                     f"Side={side:<4} "
                     f"Price={order.price:>8.2f} "
-                    f"Qty={order.quantity:<5}"
+                    f"Qty={order.quantity:<5} "
+                    f"Trades={len(trades)}"
                 )
 
-            # Print live statistics once per second.
             current_time = time.perf_counter()
 
             if current_time - last_display >= 1:
+
                 self.display_statistics(
                     current_time
                 )
@@ -100,9 +118,7 @@ class OrderConsumer:
     def display_statistics(self, current_time):
         """Display current consumer statistics."""
 
-        elapsed = (
-            current_time - self.start_time
-        )
+        elapsed = current_time - self.start_time
 
         rate = (
             self.orders_consumed / elapsed
@@ -113,11 +129,12 @@ class OrderConsumer:
         print(
             f"\n[Consumer] "
             f"Orders: {self.orders_consumed:,} | "
-            f"Rate: {rate:,.0f} orders/sec"
+            f"Rate: {rate:,.0f} orders/sec | "
+            f"Trades: {self.trades_generated:,}"
         )
 
     def print_final_statistics(self):
-        """Display final statistics."""
+        """Display final consumer statistics."""
 
         elapsed = (
             time.perf_counter()
@@ -132,7 +149,7 @@ class OrderConsumer:
 
         print("\n")
         print("=" * 60)
-        print("Consumer Statistics")
+        print("ChronosMatch Consumer Statistics")
         print("=" * 60)
 
         print(
@@ -147,6 +164,21 @@ class OrderConsumer:
         print(
             f"Average rate     : "
             f"{rate:,.2f} orders/sec"
+        )
+
+        print(
+            f"Trades generated : "
+            f"{self.trades_generated:,}"
+        )
+
+        print(
+            f"Buy orders       : "
+            f"{self.engine.get_buy_order_count():,}"
+        )
+
+        print(
+            f"Sell orders      : "
+            f"{self.engine.get_sell_order_count():,}"
         )
 
         print("=" * 60)
@@ -165,17 +197,13 @@ def main():
 
         consumer.connect()
 
-        consumer.consume(
-            duration=10
-        )
+        consumer.consume(duration=10)
 
         consumer.print_final_statistics()
 
     except KeyboardInterrupt:
 
-        print(
-            "\nConsumer stopped by user."
-        )
+        print("\nConsumer stopped by user.")
 
     except FileNotFoundError as error:
 
