@@ -1,14 +1,16 @@
 """
-ChronosMatch End-to-End IPC Consumer.
+ChronosMatch End-to-End Consumer.
 
-Reads orders from the mmap ring buffer and
-measures producer-to-consumer latency.
+Reads orders from the mmap ring buffer, processes them through
+the Cython matching engine, and measures IPC latency and
+matching-engine throughput.
 """
 
 import os
 import time
 
 from ipc import RingBuffer
+from cython_engine.matching_engine import CythonMatchingEngine
 
 
 IPC_FILE = "e2e_chronosmatch.ipc"
@@ -17,9 +19,7 @@ BUFFER_CAPACITY = 100_000
 
 
 def percentile(values, percentile_value):
-    """
-    Calculate a percentile from a sorted list.
-    """
+    """Calculate a percentile from a sorted list."""
 
     if not values:
         return 0
@@ -60,12 +60,18 @@ def run_consumer():
 
     expected = ring_buffer.get_expected_orders()
 
+    engine = CythonMatchingEngine()
+
     print("=" * 65)
     print("ChronosMatch E2E Consumer")
     print("=" * 65)
 
     print(
         f"Expected orders : {expected:,}"
+    )
+
+    print(
+        "Cython engine   : ENABLED"
     )
 
     print(
@@ -77,6 +83,7 @@ def run_consumer():
     start_time = time.perf_counter()
 
     consumed = 0
+    trades_generated = 0
 
     latencies_ns = []
 
@@ -88,30 +95,44 @@ def run_consumer():
 
         if order is not None:
 
-            # Timestamp when the consumer receives
-            # the order from the mmap buffer.
+            # Capture receive timestamp immediately
+            # after reading the IPC record.
             receive_time_ns = (
                 time.perf_counter_ns()
             )
 
-            # Producer timestamp → Consumer timestamp
             latency_ns = (
                 receive_time_ns
                 - order.timestamp_ns
             )
 
-            # Ignore impossible negative values.
             if latency_ns >= 0:
                 latencies_ns.append(
                     latency_ns
                 )
 
+            # IPC BUY = 1
+            # IPC SELL = 2
+            is_buy = order.side == 1
+
+            # Send the order to the Cython
+            # matching engine.
+            trades = engine.match_order(
+                order.order_id,
+                order.price,
+                order.quantity,
+                is_buy,
+                order.timestamp_ns,
+            )
+
+            trades_generated += len(trades)
+
             consumed += 1
 
         else:
 
-            # Producer has finished AND
-            # all orders have been consumed.
+            # Producer has finished and all expected
+            # orders have been consumed.
             if (
                 ring_buffer.is_producer_done()
                 and consumed >= expected
@@ -139,7 +160,8 @@ def run_consumer():
                 f"[Consumer] "
                 f"{consumed:,}/{expected:,} "
                 f"orders | "
-                f"{rate:,.0f} orders/sec"
+                f"{rate:,.0f} orders/sec | "
+                f"Trades: {trades_generated:,}"
             )
 
             last_display = now
@@ -206,7 +228,7 @@ def run_consumer():
         p99_ns = 0
         p999_ns = 0
 
-    # Convert nanoseconds → microseconds.
+    # Convert nanoseconds to microseconds.
     min_latency_us = (
         min_latency_ns / 1_000
     )
@@ -256,7 +278,23 @@ def run_consumer():
         f"{throughput:,.0f} orders/sec"
     )
 
+    print(
+        f"Trades generated: "
+        f"{trades_generated:,}"
+    )
+
+    print(
+        f"Buy orders left : "
+        f"{engine.get_buy_order_count():,}"
+    )
+
+    print(
+        f"Sell orders left: "
+        f"{engine.get_sell_order_count():,}"
+    )
+
     print()
+
     print("-" * 65)
     print("IPC LATENCY")
     print("-" * 65)
