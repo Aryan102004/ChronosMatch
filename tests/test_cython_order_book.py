@@ -371,3 +371,49 @@ def test_cython_non_matching_sell_order():
     assert len(book.sell_orders) == 1
     assert book.sell_orders[0].order_id == 2
     assert book.sell_orders[0].quantity == 30
+def test_cython_buy_time_priority():
+    book = CythonOrderBook()
+
+    buy1 = CythonOrder(
+        1, 100.0, 50, True, 1
+    )
+
+    buy2 = CythonOrder(
+        2, 100.0, 50, True, 2
+    )
+
+    book.add_order(buy1)
+    book.add_order(buy2)
+
+    sell = CythonOrder(
+        3, 100.0, 50, False, 3
+    )
+
+    trades = book.match_order(sell)
+
+    assert len(trades) == 1
+    assert trades[0]["buy_order_id"] == 1
+
+
+def test_cython_sell_time_priority():
+    book = CythonOrderBook()
+
+    sell1 = CythonOrder(
+        1, 100.0, 50, False, 1
+    )
+
+    sell2 = CythonOrder(
+        2, 100.0, 50, False, 2
+    )
+
+    book.add_order(sell1)
+    book.add_order(sell2)
+
+    buy = CythonOrder(
+        3, 100.0, 50, True, 3
+    )
+
+    trades = book.match_order(buy)
+
+    assert len(trades) == 1
+    assert trades[0]["sell_order_id"] == 1
