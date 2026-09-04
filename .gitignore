@@ -37,3 +37,8 @@ htmlcov/
 # OS
 .DS_Store
 Thumbs.db
+# Local runtime databases
+*.db
+
+# Local backup files
+*_backup.py
